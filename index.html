@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3Dボクセルゲーム（ステージ選択ロード画面付き）</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', sans-serif; user-select: none; -webkit-user-select: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* 🌐 最初のロード画面（ステージ選択） */
+        #loading-screen {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: linear-gradient(rgba(16, 16, 24, 0.85), rgba(16, 16, 24, 0.95)), url('https://threejs.org/examples/textures/cube/skybox/px.jpg');
+            background-size: cover; z-index: 500; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; color: white; text-align: center;
+        }
+        #loading-screen h1 { font-size: 28px; margin-bottom: 5px; text-shadow: 3px 3px #000; color: #55ff55; }
+        #loading-screen p { font-size: 14px; margin-bottom: 25px; color: #ccc; }
+        
+        .menu-section { background: rgba(255,255,255,0.05); padding: 20px; border-radius: 8px; border: 2px solid #444; width: 280px; margin-bottom: 15px; }
+        .menu-title { font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #ffaa00; }
+        
+        /* ステージ（ルーム）選択ボタン */
+        .room-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+        .room-btn {
+            background: #333; color: white; border: 2px solid #555; padding: 10px 0;
+            font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 4px;
+            box-shadow: inset -2px -2px #111, inset 2px 2px #666;
+        }
+        .room-btn:active { box-shadow: inset 2px 2px #111, inset -2px -2px #666; background: #222; }
+        .room-btn.active { background: #22a422; border-color: #fff; }
+
+        /* 🎯 画面中央の照準 */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 20;
+        }
+        #crosshair::before, #crosshair::after { content: ''; position: absolute; background: white; mix-blend-mode: difference; }
+        #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+        #crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+        /* 📱 アクションボタン */
+        .action-btn {
+            position: absolute; width: 70px; height: 70px;
+            background: rgba(0, 0, 0, 0.5); color: white; border: 3px solid #555;
+            box-shadow: inset -4px -4px #222, inset 4px 4px #888; font-size: 14px; font-weight: bold; z-index: 10;
+        }
+        .action-btn:active { box-shadow: inset 4px 4px #222, inset -4px -4px #888; padding-top: 5px; }
+        #dig-btn { bottom: 160px; right: 20px; background: rgba(139, 69, 19, 0.6); }
+        #build-btn { bottom: 80px; right: 20px; background: rgba(34, 139, 34, 0.6); }
+
+        /* 🎨 カラーパレット */
+        #palette-container {
+            position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+            width: 90vw; height: 60px; background: #333; border: 4px solid #555;
+            box-shadow: inset -4px -4px #111, inset 4px 4px #777;
+            display: flex; align-items: center; overflow-x: auto; padding: 0 5px; box-sizing: border-box; z-index: 10;
+        }
+        .color-swatch {
+            width: 42px; height: 42px; margin-right: 6px; flex-shrink: 0; border: 2px solid #222;
+            display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: white; text-shadow: 1px 1px black;
+        }
+        .color-swatch.selected { border: 3px solid #fff; transform: scale(1.05); }
+        
+        /* 🕹️ ジョイスティック */
+        #joystick-base {
+            position: absolute; width: 100px; height: 100px; background: rgba(255, 255, 255, 0.15);
+            border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; display: none; transform: translate(-50%, -50%); pointer-events: none; z-index: 5;
+        }
+        #joystick-stick { position: absolute; width: 40px; height: 40px; background: rgba(255, 255, 255, 0.5); border-radius: 50%; top: 27px; left: 27px; }
+        
+        /* 左上の現在の部屋状態UI */
+        #room-info-badge {
+            position: absolute; top: 10px; left: 10px; color: white; text-shadow: 2px 2px black; font-size: 13px;
+            background: rgba(0,0,0,0.6); padding: 5px 10px; border-radius: 4px; border: 1px solid #444; z-index: 100; display: none;
+        }
+    </style>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <h1>BLOCK WORLD MULTI</h1>
+        <p>〜 ロード中＆ステージ選択 〜</p>
+        
+        <div class="menu-section">
+            <div class="menu-title">入るステージ（部屋）を選ぶ</div>
+            <div class="room-grid">
+                <button class="room-btn" data-room="A">A</button>
+                <button class="room-btn" data-room="B">B</button>
+                <button class="room-btn" data-room="C">C</button>
+                <button class="room-btn" data-room="D">D</button>
+                <button class="room-btn" data-room="E">E</button>
+            </div>
+        </div>
+        <div id="loading-status" style="font-size: 12px; color: #aaa;">ステージボタンを押すとゲームが始まります</div>
+    </div>
+
+    <div id="room-info-badge">ステージ: <span id="current-stage-text" style="color:#ff0; font-weight:bold;">-</span> | 状態: <span id="conn-status-text">オフライン</span></div>
+    <div id="crosshair"></div>
+    
+    <button id="dig-btn" class="action-btn">掘る</button>
+    <button id="build-btn" class="action-btn">置く</button>
+
+    <div id="palette-container"></div>
+    <div id="joystick-base"><div id="joystick-stick"></div></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 1. 基本セットアップ ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 5);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(20, 40, 20);
+        scene.add(dirLight);
+
+        const blocks = [];
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        
+        // --- 🎨 35種のブロックカラー・形状定義 ---
+        const colors = [
+            0x557a2b, 0x8B4513, 0xA0522D, 0xCD853F, 0x707070, 0x808080, 0x909090, 0xA9A9A9, 
+            0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffa500, 0x800080, 
+            0xffc0cb, 0x008000, 0x000080, 0x800000, 0xffffe0, 0xe6e6fa, 0xf5f5dc, 0x00fa9a, 
+            0x40e0d0, 0xee82ee, 0x333333, 0xeeeeee, 0x111111, 0xffffff,
+            'door', 'roof', 'stair', 'bed' 
+        ];
+        let selectedColorInfo = colors[0];
+
+        // インベントリ生成
+        const palette = document.getElementById('palette-container');
+        colors.forEach((color, index) => {
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            if (index === 0) swatch.classList.add('selected');
+            if (typeof color === 'number') {
+                swatch.style.backgroundColor = '#' + color.toString(16).padStart(6, '0');
+            } else {
+                swatch.style.backgroundColor = '#444';
+                swatch.innerText = color === 'door' ? '扉' : color === 'roof' ? '屋' : color === 'stair' ? '階' : 'ベ';
+            }
+            swatch.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('selected'));
+                swatch.classList.add('selected');
+                selectedColorInfo = color;
+            });
+            palette.appendChild(swatch);
+        });
+
+        // 初期の大地
+        const matGrass = new THREE.MeshLambertMaterial({ color: 0x557a2b });
+        for (let x = -5; x <= 5; x++) {
+            for (let z = -5; z <= 5; z++) {
+                const cube = new THREE.Mesh(geo, matGrass);
+                cube.position.set(x, -1, z);
+                scene.add(cube);
+                blocks.push(cube);
+            }
+        }
+
+        // --- 🕹️ 操作・移動の管理状態 ---
+        const playerMove = { forward: 0, vX: 0 };
+        const keyState = { w: false, a: false, s: false, d: false };
+        const moveSpeed = 0.07;
+
+        // PCキーボード
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || e.key === 'ArrowUp') keyState.w = true;
+            if (key === 'a' || e.key === 'ArrowLeft') keyState.a = true;
+            if (key === 's' || e.key === 'ArrowDown') keyState.s = true;
+            if (key === 'd' || e.key === 'ArrowRight') keyState.d = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || e.key === 'ArrowUp') keyState.w = false;
+            if (key === 'a' || e.key === 'ArrowLeft') keyState.a = false;
+            if (key === 's' || e.key === 'ArrowDown') keyState.s = false;
+            if (key === 'd' || e.key === 'ArrowRight') keyState.d = false;
+        });
+
+        // PCマウスドラッグ視点
+        let isMouseDown = false; let prevMouseX = 0; let prevMouseY = 0;
+        window.addEventListener('mousedown', (e) => {
+            if (e.target.closest('#palette-container') || e.target.closest('.action-btn') || e.target.closest('#loading-screen')) return;
+            isMouseDown = true; prevMouseX = e.clientX; prevMouseY = e.clientY;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!isMouseDown) return;
+            const dx = e.clientX - prevMouseX; const dy = e.clientY - prevMouseY;
+            camera.rotation.y -= dx * 0.004; camera.rotation.x -= dy * 0.004;
+            camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+            prevMouseX = e.clientX; prevMouseY = e.clientY;
+        });
+        window.addEventListener('mouseup', () => isMouseDown = false);
+
+        // スマホマルチタッチ・ジョイスティック
+        const joyBase = document.getElementById('joystick-base');
+        const joyStick = document.getElementById('joystick-stick');
+        const touchState = { leftId: null, rightId: null, leftStartX: 0, leftStartY: 0, rightLastX: 0, rightLastY: 0 };
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.target.closest('#palette-container') || e.target.closest('.action-btn') || e.target.closest('#loading-screen')) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.clientX < window.innerWidth / 2 && touchState.leftId === null) {
+                    touchState.leftId = touch.identifier; touchState.leftStartX = touch.clientX; touchState.leftStartY = touch.clientY;
+                    joyBase.style.left = `${touch.clientX}px`; joyBase.style.top = `${touch.clientY}px`; joyBase.style.display = 'block';
+                    joyStick.style.transform = `translate(0px, 0px)`;
+                } else if (touch.clientX >= window.innerWidth / 2 && touchState.rightId === null) {
+                    touchState.rightId = touch.identifier; touchState.rightLastX = touch.clientX; touchState.rightLastY = touch.clientY;
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === touchState.leftId) {
+                    const dx = touch.clientX - touchState.leftStartX; const dy = touch.clientY - touchState.leftStartY;
+                    const dist = Math.sqrt(dx*dx + dy*dy); const maxR = 40;
+                    let sX = dx, sY = dy; if (dist > maxR) { sX = (dx / dist) * maxR; sY = (dy / dist) * maxR; }
+                    joyStick.style.transform = `translate(${sX}px, ${sY}px)`;
+                    playerMove.vX = (sX / maxR) * moveSpeed; playerMove.forward = -(sY / maxR) * moveSpeed;
+                }
+                if (touch.identifier === touchState.rightId) {
+                    const dx = touch.clientX - touchState.rightLastX; const dy = touch.clientY - touchState.rightLastY;
+                    camera.rotation.y -= dx * 0.004; camera.rotation.x -= dy * 0.004;
+                    camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+                    touchState.rightLastX = touch.clientX; touchState.rightLastY = touch.clientY;
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === touchState.leftId) {
+                    touchState.leftId = null; joyBase.style.display = 'none'; playerMove.forward = 0; playerMove.vX = 0;
+                }
+                if (touch.identifier === touchState.rightId) { touchState.rightId = null; }
+            }
+        });
+
+        // --- 🌐 2. ロード画面＆P2Pマルチ接続処理 ---
+        let peer = null;
+        let conn = null;
+        const remotePlayers = {};
+
+        // ロード画面のボタンイベント設定
+        document.querySelectorAll('.room-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const chosenRoom = e.target.getAttribute('data-room');
+                startStageLoad(chosenRoom);
+            });
+        });
+
+        function startStageLoad(roomName) {
+            document.getElementById('loading-status').innerText = `ステージ「${roomName}」をロードして接続を確立中...`;
+            document.getElementById('current-stage-text').innerText = roomName;
+
+            // ランダムなIDで自分が起動
+            peer = new Peer();
+
+            peer.on('open', (myId) => {
+                console.log("My Peer ID:", myId);
+                
+                // 1文字の部屋ID（例: 'A'）に直接接続を試みる（誰かが既にその部屋を開いていればゲストとして入る）
+                conn = peer.connect(roomName);
+                setupDataListener(roomName, true); // true = 接続トライモード
+
+                // 3秒経っても繋がらなかった場合、自分がその部屋（ホスト）になる
+                setTimeout(() => {
+                    if (!conn || !conn.open) {
+                        console.log(`部屋 ${roomName} に誰もいないため、自分がステージを作成します。`);
+                        if (conn) conn.close();
+                        
+                        // 現在のPeerを破棄して、部屋名そのもののIDでホストとして再起動
+                        peer.destroy();
+                        
+                        peer = new Peer(roomName);
+                        peer.on('open', () => {
+                            document.getElementById('conn-status-text').innerText = "👑 ステージ主として配信中";
+                            document.getElementById('conn-status-text').style.color = "#55ff55";
+                            enterGameWorld();
+                        });
+                        
+                        peer.on('connection', (newConnection) => {
+                            conn = newConnection;
+                            setupDataListener(roomName, false);
+                        });
+                        
+                        peer.on('error', (err) => {
+                            // タイミングのズレでもし既に部屋が埋まっていた場合
+                            if (err.type === 'unavailable-id') {
+                                startStageLoad(roomName); // 再試行
+                            }
+                        });
+                    }
+                }, 1500);
+            });
+        }
+
+        // ロード画面を非表示にしてゲーム画面を出す関数
+        function enterGameWorld() {
+            const screen = document.getElementById('loading-screen');
+            screen.style.transition = 'opacity 0.5s';
+            screen.style.opacity = '0';
+            setTimeout(() => {
+                screen.style.display = 'none';
+                document.getElementById('room-info-badge').style.display = 'block';
+            }, 500);
+        }
+
+        // P2P通信データ受信イベント
+        function setupDataListener(roomName, isGuestInitialTry) {
+            if (!conn) return;
+
+            conn.on('open', () => {
+                document.getElementById('conn-status-text').innerText = "🟢 ステージ同期完了";
+                document.getElementById('conn-status-text').style.color = "#00ffff";
+                enterGameWorld();
+            });
+
+            conn.on('close', () => {
+                document.getElementById('conn-status-text').innerText = "🔴 オフライン切断";
+                document.getElementById('conn-status-text').style.color = "#ff4444";
+            });
+
+            conn.on('data', (data) => {
+                if (data.type === 'move') {
+                    updateRemotePlayer(data.id, data.pos, data.rot);
+                }
+                if (data.type === 'build') {
+                    let mat;
+                    if (typeof data.color === 'number') {
+                        mat = new THREE.MeshLambertMaterial({ color: data.color });
+                    } else {
+                        if (data.color === 'door') mat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+                        if (data.color === 'roof') mat = new THREE.MeshLambertMaterial({ color: 0xA0522D });
+                        if (data.color === 'stair') mat = new THREE.MeshLambertMaterial({ color: 0x707070 });
+                        if (data.color === 'bed') mat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+                    }
+                    const remoteBlock = new THREE.Mesh(geo, mat);
+                    remoteBlock.scale.set(data.scale.x, data.scale.y, data.scale.z);
+                    remoteBlock.position.set(data.pos.x, data.pos.y, data.pos.z);
+                    scene.add(remoteBlock);
+                    blocks.push(remoteBlock);
+                }
+                if (data.type === 'dig') {
+                    const threshold = 0.1;
+                    const target = blocks.find(b => 
+                        Math.abs(b.position.x - data.pos.x) < threshold &&
+                        Math.abs(b.position.y - data.pos.y) < threshold &&
+                        Math.abs(b.position.z - data.pos.z) < threshold
+                    );
+                    if (target && target.position.y !== -1) {
+                        scene.remove(target);
+                        const index = blocks.indexOf(target);
+                        if (index > -1) blocks.splice(index, 1);
+                    }
+                }
+            });
+        }
+
+        // 他プレイヤーのアバター表示
+        function updateRemotePlayer(id, pos, rot) {
+            if (!remotePlayers[id]) {
+                const pGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6);
+                const pMat = new THREE.MeshLambertMaterial({ color: 0xff4444 });
+                const avatar = new THREE.Mesh(pGeo, pMat);
+                scene.add(avatar);
+                remotePlayers[id] = avatar;
+            }
+            remotePlayers[id].position.set(pos.x, pos.y - 0.9, pos.z);
+            remotePlayers[id].rotation.set(0, rot.y, 0);
+        }
+
+        // --- 🧱 ボタン操作による破壊・配置 ---
+        const raycaster = new THREE.Raycaster();
+        const centerPos = new THREE.Vector2(0, 0);
+
+        function executeAction(isBuild) {
+            raycaster.setFromCamera(centerPos, camera);
+            const intersects = raycaster.intersectObjects(blocks);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+
+                if (isBuild) {
+                    let mat, scale = { x: 1, y: 1, z: 1 };
+                    if (typeof selectedColorInfo === 'number') {
+                        mat = new THREE.MeshLambertMaterial({ color: selectedColorInfo });
+                    } else {
+                        if (selectedColorInfo === 'door') { mat = new THREE.MeshLambertMaterial({ color: 0x8B4513 }); scale = { x: 0.9, y: 1.8, z: 0.1 }; }
+                        if (selectedColorInfo === 'roof') { mat = new THREE.MeshLambertMaterial({ color: 0xA0522D }); scale = { x: 1, y: 0.5, z: 1 }; }
+                        if (selectedColorInfo === 'stair') { mat = new THREE.MeshLambertMaterial({ color: 0x707070 }); scale = { x: 1, y: 0.7, z: 0.7 }; }
+                        if (selectedColorInfo === 'bed') { mat = new THREE.MeshLambertMaterial({ color: 0xff0000 }); scale = { x: 0.9, y: 0.4, z: 1.8 }; }
+                    }
+
+                    const newBlock = new THREE.Mesh(geo, mat);
+                    newBlock.scale.set(scale.x, scale.y, scale.z);
+                    newBlock.position.copy(hit.object.position).add(hit.face.normal);
+                    
+                    if (selectedColorInfo === 'door') newBlock.position.y += 0.4;
+                    if (selectedColorInfo === 'roof') newBlock.position.y -= 0.25;
+                    if (selectedColorInfo === 'bed') newBlock.position.y -= 0.3;
+
+                    scene.add(newBlock);
+                    blocks.push(newBlock);
+
+                    if (conn && conn.open) {
+                        conn.send({ type: 'build', color: selectedColorInfo, pos: { x: newBlock.position.x, y: newBlock.position.y, z: newBlock.position.z }, scale: scale });
+                    }
+                } else {
+                    if (hit.object.position.y === -1) return;
+
+                    if (conn && conn.open) {
+                        conn.send({ type: 'dig', pos: { x: hit.object.position.x, y: hit.object.position.y, z: hit.object.position.z } });
+                    }
+
+                    scene.remove(hit.object);
+                    const index = blocks.indexOf(hit.object);
+                    if (index > -1) blocks.splice(index, 1);
+                }
+            }
+        }
+
+        document.getElementById('dig-btn').addEventListener('pointerdown', (e) => { e.stopPropagation(); executeAction(false); });
+        document.getElementById('build-btn').addEventListener('pointerdown', (e) => { e.stopPropagation(); executeAction(true); });
+
+        // --- 6. ループ ---
+        camera.rotation.order = 'YXZ';
+        let lastSendTime = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            let fb = playerMove.forward;
+            let lr = playerMove.vX;
+            if (keyState.w) fb = moveSpeed;
+            if (keyState.s) fb = -moveSpeed;
+            if (keyState.a) lr = -moveSpeed;
+            if (keyState.d) lr = moveSpeed;
+
+            if (fb !== 0 || lr !== 0) {
+                camera.translateZ(-fb);
+                camera.translateX(lr);
+                camera.position.y = 2;
+            }
+            renderer.render(scene, camera);
+
+            // 位置データの送信
+            const now = performance.now();
+            if (conn && conn.open && now - lastSendTime > 33) {
+                conn.send({
+                    type: 'move',
+                    id: peer.id,
+                    pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                    rot: { x: camera.rotation.x, y: camera.rotation.y, z: camera.rotation.z }
+                });
+                lastSendTime = now;
+            }
+        }
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        animate();
+    </script>
+</body>
+</html>
