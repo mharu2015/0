@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>マイクラ風・3Dボクセルゲーム（1文字IDマルチ対応）</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Courier New', sans-serif; user-select: none; -webkit-user-select: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* 🎯 画面中央の照準（クロスヘア） */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 20;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: white; mix-blend-mode: difference;
+        }
+        #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+        #crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+        /* 📱 右側のアクションボタン（掘る・置く独立） */
+        .action-btn {
+            position: absolute; width: 70px; height: 70px;
+            background: rgba(0, 0, 0, 0.5); color: white; border: 3px solid #555;
+            box-shadow: inset -4px -4px #222, inset 4px 4px #888;
+            font-size: 14px; font-weight: bold; cursor: pointer; pointer-events: auto; z-index: 10;
+        }
+        .action-btn:active { box-shadow: inset 4px 4px #222, inset -4px -4px #888; padding-top: 5px; }
+        #dig-btn { bottom: 160px; right: 20px; background: rgba(139, 69, 19, 0.6); } /* 掘る */
+        #build-btn { bottom: 80px; right: 20px; background: rgba(34, 139, 34, 0.6); } /* 置く */
+
+        /* 🎨 インベントリ風カラーパレット */
+        #palette-container {
+            position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+            width: 90vw; height: 60px; background: #333; border: 4px solid #555;
+            box-shadow: inset -4px -4px #111, inset 4px 4px #777;
+            display: flex; align-items: center; overflow-x: auto; padding: 0 5px;
+            box-sizing: border-box; z-index: 10; pointer-events: auto;
+        }
+        .color-swatch {
+            width: 42px; height: 42px; margin-right: 6px; flex-shrink: 0;
+            border: 2px solid #222; box-sizing: border-box; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: white; text-shadow: 1px 1px black;
+        }
+        .color-swatch.selected { border: 3px solid #fff; transform: scale(1.05); }
+        
+        /* 🕹️ ジョイスティック */
+        #joystick-base {
+            position: absolute; width: 100px; height: 100px; background: rgba(255, 255, 255, 0.15);
+            border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; display: none; transform: translate(-50%, -50%); pointer-events: none; z-index: 5;
+        }
+        #joystick-stick {
+            position: absolute; width: 40px; height: 40px; background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%; top: 27px; left: 27px; pointer-events: none;
+        }
+        
+        #info { position: absolute; top: 10px; left: 10px; color: white; text-shadow: 2px 2px black; font-size: 14px; pointer-events: none; z-index: 10; }
+        
+        /* 🌐 P2P接続用UI（1文字対応） */
+        #p2p-ui {
+            position: absolute; top: 35px; left: 10px; color: white; z-index: 100; font-size: 11px; 
+            background: rgba(0,0,0,0.75); padding: 10px; border-radius: 5px; border: 1px solid #555;
+            font-family: sans-serif; width: 160px;
+        }
+        #p2p-ui input { width: 40px; font-size: 11px; background: #222; color: #fff; border: 1px solid #555; padding: 2px; text-align: center; }
+        #p2p-ui button { font-size: 11px; background: #444; color: #fff; border: 1px solid #666; cursor: pointer; padding: 2px 6px; }
+        #p2p-ui button:active { background: #222; }
+        .ui-row { margin-top: 6px; display: flex; align-items: center; justify-content: space-between; }
+    </style>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+    <div id="info">🧱 MINECRAFT STYLE CLONE (MULTIPLAY)</div>
+    <div id="crosshair"></div>
+    
+    <div id="p2p-ui">
+        <div class="ui-row">
+            <span>自分の1文字ID:</span>
+            <input type="text" id="my-id-input" maxlength="1" placeholder="A" value="A">
+            <button id="start-peer-btn">決定</button>
+        </div>
+        <div class="ui-row">
+            <span>相手の1文字ID:</span>
+            <input type="text" id="target-id-input" maxlength="1" placeholder="B">
+            <button id="connect-btn" disabled>接続</button>
+        </div>
+        <div id="conn-status" style="color:#aaa; margin-top:6px; text-align:center;">IDを決めて決定を押してね</div>
+    </div>
+    
+    <button id="dig-btn" class="action-btn">掘る</button>
+    <button id="build-btn" class="action-btn">置く</button>
+
+    <div id="palette-container"></div>
+    <div id="joystick-base"><div id="joystick-stick"></div></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 1. 基本セットアップ ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 5);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(20, 40, 20);
+        scene.add(dirLight);
+
+        const blocks = [];
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        
+        // --- 🎨 30色＋5種の特殊ブロック ---
+        const colors = [
+            0x557a2b, 0x8B4513, 0xA0522D, 0xCD853F, 
+            0x707070, 0x808080, 0x909090, 0xA9A9A9, 
+            0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 
+            0xffa500, 0x800080, 0xffc0cb, 0x008000, 0x000080, 0x800000,
+            0xffffe0, 0xe6e6fa, 0xf5f5dc, 0x00fa9a, 0x40e0d0, 0xee82ee,
+            0x333333, 0xeeeeee, 0x111111, 0xffffff,
+            'door', 'roof', 'stair', 'bed' 
+        ];
+
+        let selectedColorInfo = colors[0];
+
+        // インベントリ生成
+        const palette = document.getElementById('palette-container');
+        colors.forEach((color, index) => {
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            if (index === 0) swatch.classList.add('selected');
+            
+            if (typeof color === 'number') {
+                swatch.style.backgroundColor = '#' + color.toString(16).padStart(6, '0');
+            } else {
+                swatch.style.backgroundColor = '#444';
+                swatch.innerText = color === 'door' ? '扉' : color === 'roof' ? '屋' : color === 'stair' ? '階' : 'ベ';
+            }
+
+            swatch.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('selected'));
+                swatch.classList.add('selected');
+                selectedColorInfo = color;
+            });
+            palette.appendChild(swatch);
+        });
+
+        // 初期の大地
+        const matGrass = new THREE.MeshLambertMaterial({ color: 0x557a2b });
+        for (let x = -5; x <= 5; x++) {
+            for (let z = -5; z <= 5; z++) {
+                const cube = new THREE.Mesh(geo, matGrass);
+                cube.position.set(x, -1, z);
+                scene.add(cube);
+                blocks.push(cube);
+            }
+        }
+
+        // --- 🕹️ 操作・マルチタッチロジック ---
+        const joyBase = document.getElementById('joystick-base');
+        const joyStick = document.getElementById('joystick-stick');
+        const playerMove = { forward: 0, vX: 0 };
+        const touchState = { leftId: null, rightId: null, leftStartX: 0, leftStartY: 0, rightLastX: 0, rightLastY: 0 };
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.target.closest('#palette-container') || e.target.closest('.action-btn') || e.target.closest('#p2p-ui')) return;
+
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.clientX < window.innerWidth / 2 && touchState.leftId === null) {
+                    touchState.leftId = touch.identifier;
+                    touchState.leftStartX = touch.clientX;
+                    touchState.leftStartY = touch.clientY;
+                    joyBase.style.left = `${touch.clientX}px`;
+                    joyBase.style.top = `${touch.clientY}px`;
+                    joyBase.style.display = 'block';
+                    joyStick.style.transform = `translate(0px, 0px)`;
+                } 
+                else if (touch.clientX >= window.innerWidth / 2 && touchState.rightId === null) {
+                    touchState.rightId = touch.identifier;
+                    touchState.rightLastX = touch.clientX;
+                    touchState.rightLastY = touch.clientY;
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === touchState.leftId) {
+                    const dx = touch.clientX - touchState.leftStartX;
+                    const dy = touch.clientY - touchState.leftStartY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const maxR = 40;
+                    let sX = dx, sY = dy;
+                    if (dist > maxR) { sX = (dx / dist) * maxR; sY = (dy / dist) * maxR; }
+                    joyStick.style.transform = `translate(${sX}px, ${sY}px)`;
+                    playerMove.vX = (sX / maxR) * 0.07;
+                    playerMove.forward = -(sY / maxR) * 0.07;
+                }
+                if (touch.identifier === touchState.rightId) {
+                    const dx = touch.clientX - touchState.rightLastX;
+                    const dy = touch.clientY - touchState.rightLastY;
+                    camera.rotation.y -= dx * 0.004;
+                    camera.rotation.x -= dy * 0.004;
+                    camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+                    touchState.rightLastX = touch.clientX;
+                    touchState.rightLastY = touch.clientY;
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === touchState.leftId) {
+                    touchState.leftId = null; joyBase.style.display = 'none';
+                    playerMove.forward = 0; playerMove.vX = 0;
+                }
+                if (touch.identifier === touchState.rightId) { touchState.rightId = null; }
+            }
+        });
+
+        // --- 🌐 2. P2Pマルチプレイ通信ロジック (1文字IDカスタム) ---
+        let peer = null;
+        let conn = null;
+        const remotePlayers = {}; 
+
+        // 「決定」ボタンを押して自分で指定した1文字でPeerを起動
+        document.getElementById('start-peer-btn').addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            const myId = document.getElementById('my-id-input').value.trim();
+            if (myId.length !== 1) {
+                document.getElementById('conn-status').innerText = '⚠️ IDは1文字にしてください';
+                return;
+            }
+
+            if (peer) peer.destroy(); // 既に起動していれば一度破棄
+
+            // 指定した1文字のIDで初期化
+            peer = new Peer(myId);
+
+            peer.on('open', (id) => {
+                document.getElementById('conn-status').innerText = `ID「${id}」で待機中...`;
+                document.getElementById('conn-status').style.color = '#fff';
+                document.getElementById('connect-btn').disabled = false; // 接続ボタンを有効化
+                document.getElementById('my-id-input').disabled = true;
+                document.getElementById('start-peer-btn').disabled = true;
+            });
+
+            peer.on('error', (err) => {
+                if (err.type === 'unavailable-id') {
+                    document.getElementById('conn-status').innerText = '⚠️ そのIDは既に使われています';
+                } else {
+                    document.getElementById('conn-status').innerText = '⚠️ エラーが発生しました';
+                }
+                document.getElementById('conn-status').style.color = '#f00';
+            });
+
+            // 【ホスト側】接続を受け入れる設定
+            peer.on('connection', (connection) => {
+                conn = connection;
+                setupDataListener();
+            });
+        });
+
+        // 【ゲスト側】相手の1文字IDを入力して接続
+        document.getElementById('connect-btn').addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            const targetId = document.getElementById('target-id-input').value.trim();
+            if (targetId.length === 1 && peer) {
+                document.getElementById('conn-status').innerText = `「${targetId}」に接続中...`;
+                conn = peer.connect(targetId);
+                setupDataListener();
+            } else {
+                document.getElementById('conn-status').innerText = '⚠️ 相手のIDは1文字です';
+            }
+        });
+
+        // データ通信イベントの設定
+        function setupDataListener() {
+            conn.on('open', () => {
+                document.getElementById('conn-status').innerText = '🟢 接続完了！';
+                document.getElementById('conn-status').style.color = '#0f0';
+            });
+
+            conn.on('close', () => {
+                document.getElementById('conn-status').innerText = '🔴 切断されました';
+                document.getElementById('conn-status').style.color = '#f00';
+                document.getElementById('my-id-input').disabled = false;
+                document.getElementById('start-peer-btn').disabled = false;
+            });
+
+            conn.on('data', (data) => {
+                if (data.type === 'move') {
+                    updateRemotePlayer(data.id, data.pos, data.rot);
+                }
+                if (data.type === 'build') {
+                    let mat;
+                    if (typeof data.color === 'number') {
+                        mat = new THREE.MeshLambertMaterial({ color: data.color });
+                    } else {
+                        if (data.color === 'door') mat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+                        if (data.color === 'roof') mat = new THREE.MeshLambertMaterial({ color: 0xA0522D });
+                        if (data.color === 'stair') mat = new THREE.MeshLambertMaterial({ color: 0x707070 });
+                        if (data.color === 'bed') mat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+                    }
+                    const remoteBlock = new THREE.Mesh(geo, mat);
+                    remoteBlock.scale.set(data.scale.x, data.scale.y, data.scale.z);
+                    remoteBlock.position.set(data.pos.x, data.pos.y, data.pos.z);
+                    scene.add(remoteBlock);
+                    blocks.push(remoteBlock);
+                }
+                if (data.type === 'dig') {
+                    const threshold = 0.1;
+                    const target = blocks.find(b => 
+                        Math.abs(b.position.x - data.pos.x) < threshold &&
+                        Math.abs(b.position.y - data.pos.y) < threshold &&
+                        Math.abs(b.position.z - data.pos.z) < threshold
+                    );
+                    if (target && target.position.y !== -1) {
+                        scene.remove(target);
+                        const index = blocks.indexOf(target);
+                        if (index > -1) blocks.splice(index, 1);
+                    }
+                }
+            });
+        }
+
+        function updateRemotePlayer(id, pos, rot) {
+            if (!remotePlayers[id]) {
+                const pGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6);
+                const pMat = new THREE.MeshLambertMaterial({ color: 0xff4444 });
+                const avatar = new THREE.Mesh(pGeo, pMat);
+                scene.add(avatar);
+                remotePlayers[id] = avatar;
+            }
+            remotePlayers[id].position.set(pos.x, pos.y - 0.9, pos.z);
+            remotePlayers[id].rotation.set(0, rot.y, 0);
+        }
+
+        // --- 🧱 ボタン操作による破壊・配置 ---
+        const raycaster = new THREE.Raycaster();
+        const centerPos = new THREE.Vector2(0, 0);
+
+        function executeAction(isBuild) {
+            raycaster.setFromCamera(centerPos, camera);
+            const intersects = raycaster.intersectObjects(blocks);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+
+                if (isBuild) {
+                    let mat, scale = { x: 1, y: 1, z: 1 };
+                    if (typeof selectedColorInfo === 'number') {
+                        mat = new THREE.MeshLambertMaterial({ color: selectedColorInfo });
+                    } else {
+                        if (selectedColorInfo === 'door') { mat = new THREE.MeshLambertMaterial({ color: 0x8B4513 }); scale = { x: 0.9, y: 1.8, z: 0.1 }; }
+                        if (selectedColorInfo === 'roof') { mat = new THREE.MeshLambertMaterial({ color: 0xA0522D }); scale = { x: 1, y: 0.5, z: 1 }; }
+                        if (selectedColorInfo === 'stair') { mat = new THREE.MeshLambertMaterial({ color: 0x707070 }); scale = { x: 1, y: 0.7, z: 0.7 }; }
+                        if (selectedColorInfo === 'bed') { mat = new THREE.MeshLambertMaterial({ color: 0xff0000 }); scale = { x: 0.9, y: 0.4, z: 1.8 }; }
+                    }
+
+                    const newBlock = new THREE.Mesh(geo, mat);
+                    newBlock.scale.set(scale.x, scale.y, scale.z);
+                    newBlock.position.copy(hit.object.position).add(hit.face.normal);
+                    
+                    if (selectedColorInfo === 'door') newBlock.position.y += 0.4;
+                    if (selectedColorInfo === 'roof') newBlock.position.y -= 0.25;
+                    if (selectedColorInfo === 'bed') newBlock.position.y -= 0.3;
+
+                    scene.add(newBlock);
+                    blocks.push(newBlock);
+
+                    if (conn && conn.open) {
+                        conn.send({
+                            type: 'build',
+                            color: selectedColorInfo,
+                            pos: { x: newBlock.position.x, y: newBlock.position.y, z: newBlock.position.z },
+                            scale: scale
+                        });
+                    }
+                } else {
+                    if (hit.object.position.y === -1) return;
+
+                    if (conn && conn.open) {
+                        conn.send({
+                            type: 'dig',
+                            pos: { x: hit.object.position.x, y: hit.object.position.y, z: hit.object.position.z }
+                        });
+                    }
+
+                    scene.remove(hit.object);
+                    const index = blocks.indexOf(hit.object);
+                    if (index > -1) blocks.splice(index, 1);
+                }
+            }
+        }
+
+        document.getElementById('dig-btn').addEventListener('touchstart', (e) => { e.stopPropagation(); executeAction(false); });
+        document.getElementById('build-btn').addEventListener('touchstart', (e) => { e.stopPropagation(); executeAction(true); });
+
+        // --- 6. ループ ---
+        camera.rotation.order = 'YXZ';
+        let lastSendTime = 0; 
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (playerMove.forward !== 0 || playerMove.vX !== 0) {
+                camera.translateZ(-playerMove.forward);
+                camera.translateX(playerMove.vX);
+                camera.position.y = 2; 
+            }
+            renderer.render(scene, camera);
+
+            const now = performance.now();
+            if (conn && conn.open && now - lastSendTime > 33) {
+                conn.send({
+                    type: 'move',
+                    id: peer.id,
+                    pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                    rot: { x: camera.rotation.x, y: camera.rotation.y, z: camera.rotation.z }
+                });
+                lastSendTime = now;
+            }
+        }
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        animate();
+    </script>
+</body>
+</html>
